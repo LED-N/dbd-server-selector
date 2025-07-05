@@ -1,7 +1,6 @@
 # Vérifier et obtenir les privilèges administrateur
 $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    # Relance le script en mode administrateur si nécessaire
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
     exit
 }
@@ -18,61 +17,60 @@ $lines = Get-Content -Path $hostsPath
 
 # Dictionnaire des noms de région pour affichage
 $regionNames = @{
-    "us-east-2"    = "États-Unis Est (Ohio)"
-    "us-east-1"    = "États-Unis Est (Virginie du Nord)"
-    "us-west-1"    = "États-Unis Ouest (Californie du Nord)"
-    "us-west-2"    = "États-Unis Ouest (Oregon)"
-    "ap-south-1"   = "Asie du Sud (Mumbai)"
-    "ap-northeast-2" = "Asie du Nord-Est (Séoul)"
-    "ap-southeast-1" = "Asie du Sud-Est (Singapour)"
-    "ap-southeast-2" = "Asie-Pacifique (Sydney)"
-    "ap-northeast-1" = "Asie du Nord-Est (Tokyo)"
-    "ap-east-1"    = "Asie de l'Est (Hong Kong)"
-    "ca-central-1" = "Canada (Centre)"
-    "eu-central-1" = "Europe (Francfort)"
-    "eu-west-1"    = "Europe (Irlande)"
-    "eu-west-2"    = "Europe (Londres)"
-    "sa-east-1"    = "Amérique du Sud (São Paulo)"
+    "us-east-2"    = "US East (Ohio)"
+    "us-east-1"    = "US East (N. Virginia)"
+    "us-west-1"    = "US West (California)"
+    "us-west-2"    = "US West (Oregon)"
+    "ap-south-1"   = "Asia South (Mumbai)"
+    "ap-northeast-2" = "Asia Northeast (Seoul)"
+    "ap-southeast-1" = "Asia Southeast (Singapore)"
+    "ap-southeast-2" = "Asia Pacific (Sydney)"
+    "ap-northeast-1" = "Asia Northeast (Tokyo)"
+    "ap-east-1"    = "Asia East (Hong Kong)"
+    "ca-central-1" = "Canada (Central)"
+    "eu-central-1" = "Europe (Frankfurt)"
+    "eu-west-1"    = "Europe (Ireland)"
+    "eu-west-2"    = "Europe (London)"
+    "sa-east-1"    = "South America (São Paulo)"
+}
+
+# Fonction utilitaire pour obtenir un nom lisible
+function Get-RegionName($code) {
+    if ($regionNames.ContainsKey($code)) { return $regionNames[$code] }
+    return $code
 }
 
 # Extraire la liste des serveurs (codes de région) présents dans hosts
 $regionList = @()
 foreach ($line in $lines) {
     if ($line -match 'gamelift-ping') {
-        # Enlever un éventuel commentaire initial '#' et extraire le nom d'hôte
         if ($line -match '0\.0\.0\.0\s+([^ ]+)') {
-            $hostname = $matches[1]   # ex: "gamelift-ping.eu-central-1.api.aws"
+            $hostname = $matches[1]
             if ($hostname -match 'gamelift-ping\.([^.]+)\.api\.aws') {
-                $code = $matches[1]   # ex: "eu-central-1"
-            } else {
-                continue
+                $code = $matches[1]
+                $displayName = Get-RegionName $code
+                $regionList += [PSCustomObject]@{ Code = $code; Name = $displayName }
             }
-        } else {
-            continue
         }
-        # Récupérer le nom lisible ou à défaut le code lui-même
-        $displayName = $regionNames.GetValue($code, $code)
-        # Conserver l'objet (code + nom) dans la liste
-        $regionList += [PSCustomObject]@{ Code = $code; Name = $displayName }
     }
 }
 
-# Afficher le menu des serveurs
-Write-Host "`n=== Sélection du serveur Dead by Daylight ==="
+# Afficher le menu
+Write-Host "`n=== Dead by Daylight Server Selector ==="
 $index = 1
 foreach ($region in $regionList) {
     Write-Host ("$index. $($region.Name) [$($region.Code)]")
     $index++
 }
-Write-Host ("0. Réinitialiser (aucun serveur prioritaire - tout autoriser)")
+Write-Host "0. Reset (Unblock all servers)"
 
-# Demander le choix de l'utilisateur
+# Demander le choix
 $selectionValide = $false
 $choix = ""
 while (-not $selectionValide) {
-    $choix = Read-Host "Entrez le(s) numéro(s) des serveurs à prioriser (ex: 1,3) ou 0 pour réinitialiser"
+    $choix = Read-Host "Enter server number(s) to allow (ex: 1,3) or 0 to reset"
     if ([string]::IsNullOrWhiteSpace($choix)) {
-        Write-Host "Veuillez saisir un choix (ou 0 pour tout autoriser)."
+        Write-Host "Invalid input."
         continue
     }
     if ($choix -match '^[0]$') {
@@ -81,18 +79,15 @@ while (-not $selectionValide) {
         $reset = $true
         break
     }
-    # Séparer par virgule ou espace
     $tokens = $choix -split '[,\s]+' | Where-Object { $_ -match '^\d+$' }
     if (-not $tokens) {
-        Write-Host "Entrée invalide. Veuillez entrer un ou plusieurs numéros (ou 0 pour réinitialiser)."
+        Write-Host "Invalid input."
         continue
     }
-    # Convertir en nombres
     $choixNumeros = $tokens | ForEach-Object { [int]$_ }
-    # Filtrer les numéros hors de portée
     $choixNumeros = $choixNumeros | Where-Object { $_ -ge 1 -and $_ -le $regionList.Count }
     if (-not $choixNumeros) {
-        Write-Host "Aucun numéro valide sélectionné. Veuillez recommencer."
+        Write-Host "No valid selection."
         continue
     }
     $choixNumeros = $choixNumeros | Sort-Object -Unique
@@ -100,64 +95,52 @@ while (-not $selectionValide) {
     $selectionValide = $true
 }
 
-# Construire la description des serveurs choisis pour confirmation
+# Confirmation
 if ($reset) {
-    $actionDesc = "rétablir le fichier hosts par défaut (autoriser tous les serveurs)"
+    $actionDesc = "reset the hosts file (unblock all servers)"
 } else {
     $selectedCodes = $choixNumeros | ForEach-Object { $regionList[$_-1].Code }
-    # Obtenir les noms correspondants
-    $selectedNames = $selectedCodes | ForEach-Object { $regionNames.GetValue($_, $_) }
+    $selectedNames = $selectedCodes | ForEach-Object { Get-RegionName $_ }
+
     if ($selectedNames.Count -gt 1) {
-        # Joindre les noms avec une virgule et " et " avant le dernier
-        $dernier = $selectedNames[-1]
-        $autres  = $selectedNames[0..($selectedNames.Count - 2)]
-        $listeServeurs = ($autres -join ", ") + " et " + $dernier
+        $last = $selectedNames[-1]
+        $others = $selectedNames[0..($selectedNames.Count - 2)]
+        $listeServeurs = ($others -join ", ") + " and " + $last
     } else {
         $listeServeurs = $selectedNames[0]
     }
-    $actionDesc = "sélectionner $listeServeurs"
+    $actionDesc = "force matchmaking on $listeServeurs"
 }
 
-# Confirmation
-$confirmation = Read-Host "Vous vous apprêtez à $actionDesc. Continuer ? (O/N)"
-if ($confirmation -notmatch '^(?:O|o)$') {
-    Write-Host "Modification annulée par l'utilisateur."
+$confirmation = Read-Host "You're about to $actionDesc. Continue? (Y/N)"
+if ($confirmation -notmatch '^(?:Y|y)$') {
+    Write-Host "Cancelled."
     exit
 }
 
-# Modifier les lignes dans le tableau $lines en fonction du choix
+# Modifier le fichier hosts
 for ($i = 0; $i -lt $lines.Count; $i++) {
     if ($lines[$i] -match 'gamelift-ping') {
-        if ($reset) {
-            # Tout autoriser : commenter toutes les lignes correspondantes
-            $lines[$i] = $lines[$i] -replace '^[\s#]*', ''
-            $lines[$i] = "# $($lines[$i])"
-        } else {
-            # Récupérer le code de la ligne
-            if ($lines[$i] -match 'gamelift-ping\.([^.]+)\.api\.aws') {
-                $codeLigne = $matches[1]
-            } else {
-                continue
-            }
-            if ($selectedCodes -contains $codeLigne) {
-                # Autoriser ce serveur (commenter la ligne)
+        if ($lines[$i] -match 'gamelift-ping\.([^.]+)\.api\.aws') {
+            $codeLigne = $matches[1]
+            if ($reset -or ($selectedCodes -contains $codeLigne)) {
+                # Autoriser => commenter
                 $lines[$i] = $lines[$i] -replace '^[\s#]*', ''
                 $lines[$i] = "# $($lines[$i])"
             } else {
-                # Bloquer ce serveur (décommenter la ligne)
+                # Bloquer => décommenter
                 $lines[$i] = $lines[$i] -replace '^[\s#]*', ''
             }
         }
     }
 }
 
-# Enregistrer les modifications dans le fichier hosts (encodage ANSI/Default)
+# Enregistrer
 Set-Content -Path $hostsPath -Value $lines -Encoding Default
 
-# Message de succès
-Write-Host "Le fichier hosts a été modifié avec succès."
+Write-Host "`n✅ hosts file updated successfully."
+
 if (-not $reset) {
-    # Lancer Dead by Daylight via Steam
-    Write-Host "Lancement de Dead by Daylight..."
+    Write-Host "🚀 Launching Dead by Daylight..."
     Start-Process "steam://rungameid/381210"
 }
