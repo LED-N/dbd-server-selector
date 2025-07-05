@@ -1,4 +1,4 @@
-# Vérifie les droits admin
+# Ensure the script is running as administrator
 $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
@@ -8,7 +8,7 @@ if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administ
 $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
 $backupPath = "$hostsPath.bak"
 
-# Liste des serveurs gamelift à gérer
+# List of GameLift server regions to manage
 $serverList = @(
     "us-east-2", "us-east-1", "us-west-1", "us-west-2",
     "ap-south-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2",
@@ -16,7 +16,7 @@ $serverList = @(
     "eu-central-1", "eu-west-1", "eu-west-2", "sa-east-1"
 )
 
-# Nom lisible pour chaque région
+# Readable display names for each region
 $regionNames = @{
     "us-east-2"      = "US East (Ohio)"
     "us-east-1"      = "US East (Virginia)"
@@ -40,35 +40,35 @@ function Get-RegionName($code) {
     return $code
 }
 
-# Charger ou initialiser le fichier hosts
+# Load the hosts file
 if (-not (Test-Path $hostsPath)) {
     Write-Host "❌ hosts file not found at $hostsPath"
     exit
 }
 $lines = Get-Content $hostsPath
 
-# Vérifier si les lignes serveurs sont présentes, sinon les ajouter
+# If the file doesn't contain any GameLift lines, append them
 $gameliftPresent = $lines | Where-Object { $_ -match "gamelift-ping\." }
 if (-not $gameliftPresent) {
-    Write-Host "`n➕ No gamelift entries found. Adding default lines..."
+    Write-Host "`n➕ No GameLift entries found. Adding default lines..."
     foreach ($code in $serverList) {
         $lines += "0.0.0.0 gamelift-ping.$code.api.aws"
     }
 }
 
-# Construire la liste interactive
+# Build region list for selection
 $regionList = $serverList | ForEach-Object {
     [PSCustomObject]@{ Code = $_; Name = Get-RegionName $_ }
 }
 
-# Affichage menu
+# Display the interactive menu
 Write-Host "`n=== Dead by Daylight Server Selector ==="
 for ($i = 0; $i -lt $regionList.Count; $i++) {
     Write-Host "$($i + 1). $($regionList[$i].Name) [$($regionList[$i].Code)]"
 }
-Write-Host "0. Reset (remove all gamelift entries)"
+Write-Host "0. Reset (remove all GameLift entries)"
 
-# Saisie utilisateur
+# Read user input
 $selectionValide = $false
 while (-not $selectionValide) {
     $choix = Read-Host "Enter server number(s) to allow (e.g. 12,13) or 0 to reset"
@@ -91,9 +91,9 @@ while (-not $selectionValide) {
     }
 }
 
-# Affichage du résumé
+# Prepare summary for confirmation
 if ($reset) {
-    $actionDesc = "reset the hosts file (remove all gamelift entries)"
+    $actionDesc = "reset the hosts file (remove all GameLift entries)"
 } else {
     $selectedCodes = $choixNumeros | ForEach-Object { $regionList[$_ - 1].Code }
     $selectedNames = $selectedCodes | ForEach-Object { Get-RegionName $_ }
@@ -108,27 +108,26 @@ if ($reset) {
     $actionDesc = "force matchmaking on $liste"
 }
 
-# Confirmation
+# Confirm the user's intention
 $confirm = Read-Host "`nYou're about to $actionDesc. Continue? (Y/N)"
 if ($confirm -notmatch '^(Y|y)$') {
     Write-Host "❌ Cancelled."
     exit
 }
 
-# Sauvegarde
+# Backup the original hosts file
 Copy-Item -Path $hostsPath -Destination $backupPath -Force
 Write-Host "💾 Backup created: $backupPath"
 
-# Appliquer les modifications
 try {
     if ($reset) {
-        # Supprimer toutes les lignes gamelift
+        # Remove all GameLift lines
         $lines = $lines | Where-Object { $_ -notmatch 'gamelift-ping\.' }
     } else {
-        # Nettoyer toutes les anciennes lignes gamelift
+        # Remove all previous GameLift lines
         $lines = $lines | Where-Object { $_ -notmatch 'gamelift-ping\.' }
 
-        # Ajouter les lignes gamelift, bloquées sauf les sélectionnées
+        # Add new entries (block all except selected ones)
         foreach ($code in $serverList) {
             if ($selectedCodes -contains $code) {
                 $lines += "# 0.0.0.0 gamelift-ping.$code.api.aws"
@@ -138,10 +137,13 @@ try {
         }
     }
 
-    # Écrire dans hosts
+    # Add short delay before write (prevents race conditions)
+    Start-Sleep -Milliseconds 800
+
+    # Write the file safely
     $lines | Out-File -FilePath $hostsPath -Encoding Default -Force
 
-    # Vérifier que le fichier n’est pas vide
+    # Ensure file wasn't wiped
     $check = Get-Content $hostsPath -ErrorAction Stop
     if ($check.Count -eq 0) { throw "hosts file is empty after write" }
 
@@ -154,7 +156,7 @@ try {
     exit
 }
 
-# Lancer le jeu si ce n’était pas un reset
+# Launch the game (unless reset)
 if (-not $reset) {
     Write-Host "`n🚀 Launching Dead by Daylight..."
     Start-Process "steam://rungameid/381210"
