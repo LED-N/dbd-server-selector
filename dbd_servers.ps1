@@ -1,146 +1,161 @@
-# Vérifier et obtenir les privilèges administrateur
+# Vérifie les droits admin
 $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
     exit
 }
 
-# Path du fichier hosts
 $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
+$backupPath = "$hostsPath.bak"
 
-# Lire le fichier hosts
-if (-not (Test-Path $hostsPath)) {
-    Write-Host "Erreur : fichier hosts introuvable à l'emplacement $hostsPath"
-    exit
-}
-$lines = Get-Content -Path $hostsPath
+# Liste des serveurs gamelift à gérer
+$serverList = @(
+    "us-east-2", "us-east-1", "us-west-1", "us-west-2",
+    "ap-south-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2",
+    "ap-northeast-1", "ap-east-1", "ca-central-1",
+    "eu-central-1", "eu-west-1", "eu-west-2", "sa-east-1"
+)
 
-# Dictionnaire des noms de région pour affichage
+# Nom lisible pour chaque région
 $regionNames = @{
-    "us-east-2"    = "US East (Ohio)"
-    "us-east-1"    = "US East (N. Virginia)"
-    "us-west-1"    = "US West (California)"
-    "us-west-2"    = "US West (Oregon)"
-    "ap-south-1"   = "Asia South (Mumbai)"
+    "us-east-2"      = "US East (Ohio)"
+    "us-east-1"      = "US East (Virginia)"
+    "us-west-1"      = "US West (California)"
+    "us-west-2"      = "US West (Oregon)"
+    "ap-south-1"     = "Asia South (Mumbai)"
     "ap-northeast-2" = "Asia Northeast (Seoul)"
     "ap-southeast-1" = "Asia Southeast (Singapore)"
     "ap-southeast-2" = "Asia Pacific (Sydney)"
     "ap-northeast-1" = "Asia Northeast (Tokyo)"
-    "ap-east-1"    = "Asia East (Hong Kong)"
-    "ca-central-1" = "Canada (Central)"
-    "eu-central-1" = "Europe (Frankfurt)"
-    "eu-west-1"    = "Europe (Ireland)"
-    "eu-west-2"    = "Europe (London)"
-    "sa-east-1"    = "South America (São Paulo)"
+    "ap-east-1"      = "Asia East (Hong Kong)"
+    "ca-central-1"   = "Canada (Central)"
+    "eu-central-1"   = "Europe (Frankfurt)"
+    "eu-west-1"      = "Europe (Ireland)"
+    "eu-west-2"      = "Europe (London)"
+    "sa-east-1"      = "South America (São Paulo)"
 }
 
-# Fonction utilitaire pour obtenir un nom lisible
 function Get-RegionName($code) {
     if ($regionNames.ContainsKey($code)) { return $regionNames[$code] }
     return $code
 }
 
-# Extraire la liste des serveurs (codes de région) présents dans hosts
-$regionList = @()
-foreach ($line in $lines) {
-    if ($line -match 'gamelift-ping') {
-        if ($line -match '0\.0\.0\.0\s+([^ ]+)') {
-            $hostname = $matches[1]
-            if ($hostname -match 'gamelift-ping\.([^.]+)\.api\.aws') {
-                $code = $matches[1]
-                $displayName = Get-RegionName $code
-                $regionList += [PSCustomObject]@{ Code = $code; Name = $displayName }
-            }
-        }
+# Charger ou initialiser le fichier hosts
+if (-not (Test-Path $hostsPath)) {
+    Write-Host "❌ hosts file not found at $hostsPath"
+    exit
+}
+$lines = Get-Content $hostsPath
+
+# Vérifier si les lignes serveurs sont présentes, sinon les ajouter
+$gameliftPresent = $lines | Where-Object { $_ -match "gamelift-ping\." }
+if (-not $gameliftPresent) {
+    Write-Host "`n➕ No gamelift entries found. Adding default lines..."
+    foreach ($code in $serverList) {
+        $lines += "0.0.0.0 gamelift-ping.$code.api.aws"
     }
 }
 
-# Afficher le menu
+# Construire la liste interactive
+$regionList = $serverList | ForEach-Object {
+    [PSCustomObject]@{ Code = $_; Name = Get-RegionName $_ }
+}
+
+# Affichage menu
 Write-Host "`n=== Dead by Daylight Server Selector ==="
-$index = 1
-foreach ($region in $regionList) {
-    Write-Host ("$index. $($region.Name) [$($region.Code)]")
-    $index++
+for ($i = 0; $i -lt $regionList.Count; $i++) {
+    Write-Host "$($i + 1). $($regionList[$i].Name) [$($regionList[$i].Code)]"
 }
-Write-Host "0. Reset (Unblock all servers)"
+Write-Host "0. Reset (remove all gamelift entries)"
 
-# Demander le choix
+# Saisie utilisateur
 $selectionValide = $false
-$choix = ""
 while (-not $selectionValide) {
-    $choix = Read-Host "Enter server number(s) to allow (ex: 1,3) or 0 to reset"
-    if ([string]::IsNullOrWhiteSpace($choix)) {
-        Write-Host "Invalid input."
-        continue
-    }
-    if ($choix -match '^[0]$') {
-        $selectionValide = $true
-        $choixNumeros = @()
+    $choix = Read-Host "Enter server number(s) to allow (e.g. 12,13) or 0 to reset"
+    if ([string]::IsNullOrWhiteSpace($choix)) { continue }
+
+    if ($choix -eq "0") {
         $reset = $true
+        $selectionValide = $true
         break
     }
+
     $tokens = $choix -split '[,\s]+' | Where-Object { $_ -match '^\d+$' }
-    if (-not $tokens) {
-        Write-Host "Invalid input."
-        continue
+    $choixNumeros = $tokens | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 1 -and $_ -le $regionList.Count }
+
+    if ($choixNumeros.Count -gt 0) {
+        $reset = $false
+        $selectionValide = $true
+    } else {
+        Write-Host "❌ Invalid selection. Try again."
     }
-    $choixNumeros = $tokens | ForEach-Object { [int]$_ }
-    $choixNumeros = $choixNumeros | Where-Object { $_ -ge 1 -and $_ -le $regionList.Count }
-    if (-not $choixNumeros) {
-        Write-Host "No valid selection."
-        continue
-    }
-    $choixNumeros = $choixNumeros | Sort-Object -Unique
-    $reset = $false
-    $selectionValide = $true
 }
 
-# Confirmation
+# Affichage du résumé
 if ($reset) {
-    $actionDesc = "reset the hosts file (unblock all servers)"
+    $actionDesc = "reset the hosts file (remove all gamelift entries)"
 } else {
-    $selectedCodes = $choixNumeros | ForEach-Object { $regionList[$_-1].Code }
+    $selectedCodes = $choixNumeros | ForEach-Object { $regionList[$_ - 1].Code }
     $selectedNames = $selectedCodes | ForEach-Object { Get-RegionName $_ }
 
     if ($selectedNames.Count -gt 1) {
         $last = $selectedNames[-1]
         $others = $selectedNames[0..($selectedNames.Count - 2)]
-        $listeServeurs = ($others -join ", ") + " and " + $last
+        $liste = ($others -join ", ") + " and " + $last
     } else {
-        $listeServeurs = $selectedNames[0]
+        $liste = $selectedNames[0]
     }
-    $actionDesc = "force matchmaking on $listeServeurs"
+    $actionDesc = "force matchmaking on $liste"
 }
 
-$confirmation = Read-Host "You're about to $actionDesc. Continue? (Y/N)"
-if ($confirmation -notmatch '^(?:Y|y)$') {
-    Write-Host "Cancelled."
+# Confirmation
+$confirm = Read-Host "`nYou're about to $actionDesc. Continue? (Y/N)"
+if ($confirm -notmatch '^(Y|y)$') {
+    Write-Host "❌ Cancelled."
     exit
 }
 
-# Modifier le fichier hosts
-for ($i = 0; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -match 'gamelift-ping') {
-        if ($lines[$i] -match 'gamelift-ping\.([^.]+)\.api\.aws') {
-            $codeLigne = $matches[1]
-            if ($reset -or ($selectedCodes -contains $codeLigne)) {
-                # Autoriser => commenter
-                $lines[$i] = $lines[$i] -replace '^[\s#]*', ''
-                $lines[$i] = "# $($lines[$i])"
+# Sauvegarde
+Copy-Item -Path $hostsPath -Destination $backupPath -Force
+Write-Host "💾 Backup created: $backupPath"
+
+# Appliquer les modifications
+try {
+    if ($reset) {
+        # Supprimer toutes les lignes gamelift
+        $lines = $lines | Where-Object { $_ -notmatch 'gamelift-ping\.' }
+    } else {
+        # Nettoyer toutes les anciennes lignes gamelift
+        $lines = $lines | Where-Object { $_ -notmatch 'gamelift-ping\.' }
+
+        # Ajouter les lignes gamelift, bloquées sauf les sélectionnées
+        foreach ($code in $serverList) {
+            if ($selectedCodes -contains $code) {
+                $lines += "# 0.0.0.0 gamelift-ping.$code.api.aws"
             } else {
-                # Bloquer => décommenter
-                $lines[$i] = $lines[$i] -replace '^[\s#]*', ''
+                $lines += "0.0.0.0 gamelift-ping.$code.api.aws"
             }
         }
     }
+
+    # Écrire dans hosts
+    Set-Content -Path $hostsPath -Value $lines -Encoding Default
+
+    # Vérifier que le fichier n’est pas vide
+    $check = Get-Content $hostsPath -ErrorAction Stop
+    if ($check.Count -eq 0) { throw "hosts file is empty after write" }
+
+    Write-Host "`n✅ hosts file updated successfully."
+} catch {
+    Write-Host "`n❌ Failed to update hosts file: $($_.Exception.Message)"
+    Write-Host "🔁 Restoring backup..."
+    Copy-Item -Path $backupPath -Destination $hostsPath -Force
+    Write-Host "✅ Backup restored."
+    exit
 }
 
-# Enregistrer
-Set-Content -Path $hostsPath -Value $lines -Encoding Default
-
-Write-Host "`n✅ hosts file updated successfully."
-
+# Lancer le jeu si ce n’était pas un reset
 if (-not $reset) {
-    Write-Host "🚀 Launching Dead by Daylight..."
+    Write-Host "`n🚀 Launching Dead by Daylight..."
     Start-Process "steam://rungameid/381210"
 }
