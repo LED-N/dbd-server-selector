@@ -97,7 +97,8 @@ if ($reset) {
 } else {
     $selectedCodes = $choixNumeros | ForEach-Object { $regionList[$_ - 1].Code }
     $selectedNames = $selectedCodes | ForEach-Object { Get-RegionName $_ }
-
+    $selectedNames = @($selectedNames)  # Force as array
+    
     if ($selectedNames.Count -gt 1) {
         $last = $selectedNames[-1]
         $others = $selectedNames[0..($selectedNames.Count - 2)]
@@ -105,6 +106,7 @@ if ($reset) {
     } else {
         $liste = $selectedNames[0]
     }
+
     $actionDesc = "force matchmaking on $liste"
 }
 
