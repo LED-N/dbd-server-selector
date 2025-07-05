@@ -38,7 +38,7 @@ This script makes that process **interactive and safe**, with a clean terminal m
 
 ## 🚀 Quick Start (One-liner)
 
-To run the script directly from GitHub (no download needed):
-
+To run the script directly from Powershell (no download needed):
+> Make sure Dead by Daylight is closed before doing so!
 ```powershell
 irm https://raw.githubusercontent.com/LED-N/dbd-server-selector/main/dbd_servers.ps1 | iex
