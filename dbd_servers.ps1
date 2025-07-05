@@ -139,7 +139,7 @@ try {
     }
 
     # Écrire dans hosts
-    Set-Content -Path $hostsPath -Value $lines -Encoding Default
+    $lines | Out-File -FilePath $hostsPath -Encoding Default -Force
 
     # Vérifier que le fichier n’est pas vide
     $check = Get-Content $hostsPath -ErrorAction Stop
